@@ -1,0 +1,142 @@
+services:
+  identity-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: libraryhub_identity
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - identity-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d libraryhub_identity"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  catalog-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: libraryhub_catalog
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - catalog-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d libraryhub_catalog"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ordering-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: libraryhub_ordering
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - ordering-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d libraryhub_ordering"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  identity-api:
+    build:
+      context: .
+      dockerfile: src/Services/Identity/Identity.API/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__IdentityDb: Host=identity-db;Port=5432;Database=libraryhub_identity;Username=postgres;Password=postgres
+      Jwt__Issuer: LibraryHub
+      Jwt__Audience: LibraryHub
+      Jwt__Secret: CHANGE_ME_TO_A_LONG_SECRET_32_CHARS
+    depends_on:
+      identity-db:
+        condition: service_healthy
+
+  catalog-api:
+    build:
+      context: .
+      dockerfile: src/Services/Catalog/Catalog.API/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__CatalogDb: Host=catalog-db;Port=5432;Database=libraryhub_catalog;Username=postgres;Password=postgres
+      ConnectionStrings__Redis: redis:6379
+      Jwt__Issuer: LibraryHub
+      Jwt__Audience: LibraryHub
+      Jwt__Secret: CHANGE_ME_TO_A_LONG_SECRET_32_CHARS
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Username: guest
+      RabbitMq__Password: guest
+    depends_on:
+      catalog-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  ordering-api:
+    build:
+      context: .
+      dockerfile: src/Services/Ordering/Ordering.API/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__OrderingDb: Host=ordering-db;Port=5432;Database=libraryhub_ordering;Username=postgres;Password=postgres
+      Jwt__Issuer: LibraryHub
+      Jwt__Audience: LibraryHub
+      Jwt__Secret: CHANGE_ME_TO_A_LONG_SECRET_32_CHARS
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Username: guest
+      RabbitMq__Password: guest
+    depends_on:
+      ordering-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: src/ApiGateway/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      - identity-api
+      - catalog-api
+      - ordering-api
+
+volumes:
+  identity-db-data:
+  catalog-db-data:
+  ordering-db-data:
